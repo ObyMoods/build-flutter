@@ -1,4 +1,3 @@
-# .github/workflows/build.yml
 name: Build Flutter APK
 
 on:
@@ -22,10 +21,9 @@ on:
           - release
 
 jobs:
-  build:
-    name: Build Flutter APK
+  build-android:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 20
 
     steps:
       - name: Checkout code
@@ -48,31 +46,11 @@ jobs:
 
       - name: Download project from bot
         run: |
-          echo "========================================="
-          echo "📥 DOWNLOADING PROJECT FROM BOT"
-          echo "========================================="
-          echo "URL: ${{ inputs.zip_url }}"
-          echo "Tag: ${{ inputs.tag }}"
-          echo "Type: ${{ inputs.build_type }}"
-          
-          curl -L --retry 5 --retry-delay 3 --max-time 120 -o project.zip "${{ inputs.zip_url }}"
+          echo "📥 Downloading project from: ${{ inputs.zip_url }}"
+          curl -L --retry 5 --retry-delay 3 -o project.zip "${{ inputs.zip_url }}"
           
           if [ ! -f project.zip ]; then
             echo "❌ Failed to download project.zip"
-            exit 1
-          fi
-          
-          FILE_SIZE=$(stat -c%s project.zip 2>/dev/null || stat -f%z project.zip 2>/dev/null || echo "0")
-          echo "📦 File size: $FILE_SIZE bytes ($(($FILE_SIZE/1024)) KB)"
-          
-          if [ $FILE_SIZE -lt 100 ]; then
-            echo "❌ File too small!"
-            cat project.zip
-            exit 1
-          fi
-          
-          if ! unzip -t project.zip 2>/dev/null; then
-            echo "❌ ZIP file is corrupted!"
             exit 1
           fi
           
@@ -82,128 +60,31 @@ jobs:
           echo "✅ Extraction successful!"
           ls -la project/
 
-      - name: 🔧 Auto Fix SDK version
+      - name: Fix SDK version
         working-directory: ./project
         run: |
-          echo "========================================="
-          echo "🔧 AUTO FIX SDK VERSION"
-          echo "========================================="
-          
-          # Cek SDK version sebelum diubah
-          echo "📄 Before fix:"
-          grep -E "^sdk:" pubspec.yaml || echo "No SDK constraint found"
-          
-          # Backup dulu
-          cp pubspec.yaml pubspec.yaml.bak
-          
-          # Ubah sdk: ^3.8.1 menjadi sdk: ">=3.0.0 <4.0.0"
+          echo "🔧 Fixing SDK version in pubspec.yaml"
           sed -i 's/sdk: \^3\.8\.1/sdk: ">=3.0.0 <4.0.0"/g' pubspec.yaml
-          
-          # Ubah sdk: ">=3.8.1 <4.0.0" menjadi sdk: ">=3.0.0 <4.0.0"
           sed -i 's/sdk: ">=3\.8\.1 <4\.0\.0"/sdk: ">=3.0.0 <4.0.0"/g' pubspec.yaml
-          
-          # Ubah sdk: ^3.8.0 menjadi sdk: ">=3.0.0 <4.0.0"
-          sed -i 's/sdk: \^3\.8\.0/sdk: ">=3.0.0 <4.0.0"/g' pubspec.yaml
-          
-          # Ubah sdk: ">=3.8.0 <4.0.0" menjadi sdk: ">=3.0.0 <4.0.0"
-          sed -i 's/sdk: ">=3\.8\.0 <4\.0\.0"/sdk: ">=3.0.0 <4.0.0"/g' pubspec.yaml
-          
-          echo ""
-          echo "📄 After fix:"
-          grep -E "^sdk:" pubspec.yaml || echo "No SDK constraint found"
-          
-          echo ""
           echo "✅ SDK version fixed!"
-
-      - name: Validate Flutter project
-        run: |
-          if [ ! -f project/pubspec.yaml ]; then
-            echo "❌ pubspec.yaml not found!"
-            ls -la project/
-            exit 1
-          fi
-          echo "✅ pubspec.yaml found"
-          
-          echo "📄 SDK requirement:"
-          grep -E "^sdk:" project/pubspec.yaml || echo "No SDK constraint"
-
-      - name: Check Flutter & Dart version
-        run: |
-          echo "========================================="
-          echo "📋 FLUTTER VERSION"
-          echo "========================================="
-          flutter --version
-          echo ""
-          dart --version
+          grep -E "^sdk:" pubspec.yaml
 
       - name: Get dependencies
         working-directory: ./project
-        run: |
-          echo "========================================="
-          echo "📦 GETTING DEPENDENCIES"
-          echo "========================================="
-          
-          flutter clean || true
-          flutter pub get
-          
-          echo "✅ Dependencies installed"
+        run: flutter pub get
 
       - name: Build APK
         working-directory: ./project
         run: |
-          echo "========================================="
-          echo "🔨 BUILDING FLUTTER APK"
-          echo "========================================="
-          
           if [ "${{ inputs.build_type }}" == "debug" ]; then
-            echo "Mode: DEBUG"
             flutter build apk --debug
           else
-            echo "Mode: RELEASE"
             flutter build apk --release
           fi
-          
-          echo "✅ Build completed!"
-
-      - name: Find APK
-        id: find_apk
-        run: |
-          echo "========================================="
-          echo "🔍 SEARCHING FOR APK"
-          echo "========================================="
-          
-          if [ "${{ inputs.build_type }}" == "debug" ]; then
-            APK_PATH=$(find project/build -name "*.apk" -path "*/debug/*" 2>/dev/null | head -1)
-          else
-            APK_PATH=$(find project/build -name "*.apk" -path "*/release/*" 2>/dev/null | head -1)
-          fi
-          
-          if [ -z "$APK_PATH" ]; then
-            APK_PATH=$(find project/build -name "*.apk" 2>/dev/null | head -1)
-          fi
-          
-          if [ -z "$APK_PATH" ]; then
-            echo "❌ No APK found!"
-            echo "📂 Build directory contents:"
-            find project/build -type f 2>/dev/null || echo "Build directory not found"
-            exit 1
-          fi
-          
-          echo "✅ Found APK: $APK_PATH"
-          echo "📏 APK size: $(du -h $APK_PATH | cut -f1)"
-          echo "APK_PATH=$APK_PATH" >> $GITHUB_OUTPUT
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: flutter-apk-${{ inputs.build_type }}
-          path: ${{ steps.find_apk.outputs.APK_PATH }}
+          path: project/build/app/outputs/flutter-apk/*.apk
           retention-days: 7
-
-      - name: Upload build logs if failed
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: build-logs
-          path: project/
-          retention-days: 3
