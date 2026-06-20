@@ -40,7 +40,8 @@ jobs:
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.22.0'
+          # 🔥 PERBAIKAN: Gunakan Flutter versi terbaru dengan Dart SDK 3.8+
+          flutter-version: '3.24.0'  # atau 'stable'
           channel: 'stable'
           cache: true
 
@@ -56,20 +57,12 @@ jobs:
           echo "URL: ${{ inputs.zip_url }}"
           echo ""
           
-          # Download dengan berbagai metode
-          echo "📥 Method 1: curl with retry..."
-          curl -L --retry 5 --retry-delay 3 --max-time 120 -o project.zip "${{ inputs.zip_url }}" || true
-          
-          # Jika curl gagal, coba wget
-          if [ ! -s project.zip ]; then
-            echo "📥 Method 2: wget..."
-            wget -O project.zip "${{ inputs.zip_url }}" || true
-          fi
+          # Download dengan curl
+          curl -L --retry 5 --retry-delay 3 --max-time 120 -o project.zip "${{ inputs.zip_url }}"
           
           # Cek apakah file berhasil didownload
           if [ ! -f project.zip ]; then
             echo "❌ Failed to download project.zip"
-            echo "URL yang digunakan: ${{ inputs.zip_url }}"
             exit 1
           fi
           
@@ -78,66 +71,26 @@ jobs:
           echo "📦 File size: $FILE_SIZE bytes ($(($FILE_SIZE/1024)) KB)"
           
           if [ $FILE_SIZE -lt 100 ]; then
-            echo "❌ File too small! Probably not a valid ZIP."
-            echo "📄 File content:"
+            echo "❌ File too small! Not a valid ZIP."
             cat project.zip
             exit 1
           fi
           
-          echo ""
-          echo "========================================="
-          echo "🔍 VALIDATING ZIP FILE"
-          echo "========================================="
-          
-          # Cek tipe file
-          echo "File type:"
-          file project.zip
-          echo ""
-          
-          # Cek header ZIP
-          echo "ZIP header (first 4 bytes):"
-          xxd -l 4 project.zip
-          echo ""
-          
           # Validasi ZIP
-          if unzip -t project.zip 2>&1; then
-            echo "✅ ZIP file is valid!"
-          else
+          if ! unzip -t project.zip 2>/dev/null; then
             echo "❌ ZIP file is corrupted or invalid!"
-            echo ""
-            echo "📄 First 200 bytes of file:"
+            echo "📄 First 200 bytes:"
             xxd -l 200 project.zip
-            echo ""
-            echo "📄 Last 200 bytes of file:"
-            tail -c 200 project.zip | xxd
             exit 1
           fi
           
-          echo ""
-          echo "========================================="
-          echo "📂 EXTRACTING ZIP FILE"
-          echo "========================================="
-          
-          # Extract ZIP dengan verbose
-          unzip -v project.zip | head -20
-          echo ""
+          # Extract ZIP
           unzip -q project.zip -d project
-          
-          # Cek hasil extract
-          if [ ! -d project ]; then
-            echo "❌ Failed to extract ZIP!"
-            exit 1
-          fi
+          rm -f project.zip
           
           echo "✅ Extraction successful!"
-          echo ""
           echo "📂 Project contents:"
           ls -la project/
-          echo ""
-          echo "📂 Total files: $(find project -type f | wc -l)"
-          
-          # Hapus ZIP setelah extract
-          rm -f project.zip
 
       - name: Validate Flutter Project
         run: |
@@ -145,55 +98,29 @@ jobs:
           echo "🔍 VALIDATING FLUTTER PROJECT"
           echo "========================================="
           
-          # Cek pubspec.yaml
           if [ ! -f project/pubspec.yaml ]; then
             echo "❌ pubspec.yaml not found!"
-            echo ""
             echo "📂 Files in project root:"
             ls -la project/
-            echo ""
-            echo "📂 All files in project (max 30):"
-            find project -type f | head -30
             exit 1
           fi
           echo "✅ pubspec.yaml found"
           
-          # Cek lib folder
-          if [ ! -d project/lib ]; then
-            echo "⚠️ lib folder not found!"
-            echo "📂 Contents of project:"
-            ls -la project/
-          else
-            echo "✅ lib folder found"
-            echo "📂 lib contents:"
-            ls -la project/lib/
-          fi
-          
-          # Cek main.dart
-          if [ -f project/lib/main.dart ]; then
-            echo "✅ main.dart found"
-          else
-            echo "⚠️ main.dart not found in lib/"
-            echo "📂 Searching for main.dart:"
-            find project -name "main.dart" 2>/dev/null || echo "Not found"
-          fi
-          
-          echo ""
-          echo "📄 pubspec.yaml content:"
-          head -20 project/pubspec.yaml
+          # Cek SDK version di pubspec.yaml
+          echo "📄 SDK version requirement:"
+          grep -E "^sdk:" project/pubspec.yaml || echo "No SDK constraint found"
+          grep -E "flutter:" project/pubspec.yaml | head -1 || echo "No Flutter constraint found"
 
-      - name: Flutter Clean & Pub Get
+      - name: Flutter Clean
         working-directory: ./project
         run: |
-          echo "========================================="
-          echo "🧹 FLUTTER CLEAN"
-          echo "========================================="
-          flutter clean
-          
-          echo ""
-          echo "========================================="
-          echo "📦 FLUTTER PUB GET"
-          echo "========================================="
+          echo "🧹 Flutter clean..."
+          flutter clean || true
+
+      - name: Flutter Pub Get
+        working-directory: ./project
+        run: |
+          echo "📦 Flutter pub get..."
           flutter pub get
           echo "✅ Dependencies installed"
 
@@ -241,16 +168,13 @@ jobs:
           # Jika masih tidak ditemukan, error
           if [ -z "$APK_PATH" ]; then
             echo "❌ No APK found!"
-            echo ""
             echo "📂 Build directory contents:"
             find project/build -type f 2>/dev/null || echo "Build directory not found"
             exit 1
           fi
           
-          # Simpan path APK
-          APK_SIZE=$(stat -c%s "$APK_PATH" 2>/dev/null || stat -f%z "$APK_PATH" 2>/dev/null || echo "0")
           echo "✅ Found APK: $APK_PATH"
-          echo "📏 APK size: $(($APK_SIZE/1024/1024)) MB ($APK_SIZE bytes)"
+          echo "📏 APK size: $(du -h $APK_PATH | cut -f1)"
           echo "APK_PATH=$APK_PATH" >> $GITHUB_OUTPUT
 
       - name: Upload APK Artifact
