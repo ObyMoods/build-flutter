@@ -40,10 +40,14 @@ jobs:
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          # 🔥 PERBAIKAN: Gunakan Flutter versi terbaru dengan Dart SDK 3.8+
-          flutter-version: '3.24.0'  # atau 'stable'
-          channel: 'stable'
+          # 🔥 PERBAIKAN: Gunakan master channel untuk Dart 3.8+
+          channel: 'master'
           cache: true
+
+      - name: Check Flutter & Dart Version
+        run: |
+          flutter --version
+          dart --version
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
@@ -55,126 +59,82 @@ jobs:
           echo "📥 DOWNLOADING PROJECT ZIP"
           echo "========================================="
           echo "URL: ${{ inputs.zip_url }}"
-          echo ""
           
-          # Download dengan curl
           curl -L --retry 5 --retry-delay 3 --max-time 120 -o project.zip "${{ inputs.zip_url }}"
           
-          # Cek apakah file berhasil didownload
           if [ ! -f project.zip ]; then
             echo "❌ Failed to download project.zip"
             exit 1
           fi
           
-          # Cek ukuran file
           FILE_SIZE=$(stat -c%s project.zip 2>/dev/null || stat -f%z project.zip 2>/dev/null || echo "0")
           echo "📦 File size: $FILE_SIZE bytes ($(($FILE_SIZE/1024)) KB)"
           
           if [ $FILE_SIZE -lt 100 ]; then
-            echo "❌ File too small! Not a valid ZIP."
+            echo "❌ File too small!"
             cat project.zip
             exit 1
           fi
           
-          # Validasi ZIP
           if ! unzip -t project.zip 2>/dev/null; then
-            echo "❌ ZIP file is corrupted or invalid!"
-            echo "📄 First 200 bytes:"
-            xxd -l 200 project.zip
+            echo "❌ ZIP file is corrupted!"
             exit 1
           fi
           
-          # Extract ZIP
           unzip -q project.zip -d project
           rm -f project.zip
           
           echo "✅ Extraction successful!"
-          echo "📂 Project contents:"
           ls -la project/
 
       - name: Validate Flutter Project
         run: |
-          echo "========================================="
-          echo "🔍 VALIDATING FLUTTER PROJECT"
-          echo "========================================="
-          
           if [ ! -f project/pubspec.yaml ]; then
             echo "❌ pubspec.yaml not found!"
-            echo "📂 Files in project root:"
             ls -la project/
             exit 1
           fi
           echo "✅ pubspec.yaml found"
           
-          # Cek SDK version di pubspec.yaml
           echo "📄 SDK version requirement:"
-          grep -E "^sdk:" project/pubspec.yaml || echo "No SDK constraint found"
-          grep -E "flutter:" project/pubspec.yaml | head -1 || echo "No Flutter constraint found"
+          grep -E "sdk:" project/pubspec.yaml || echo "No SDK constraint"
 
-      - name: Flutter Clean
+      - name: Flutter Clean & Pub Get
         working-directory: ./project
         run: |
-          echo "🧹 Flutter clean..."
           flutter clean || true
-
-      - name: Flutter Pub Get
-        working-directory: ./project
-        run: |
-          echo "📦 Flutter pub get..."
           flutter pub get
           echo "✅ Dependencies installed"
 
       - name: Flutter Build APK
         working-directory: ./project
         run: |
-          echo "========================================="
-          echo "🔨 BUILDING FLUTTER APK"
-          echo "========================================="
-          
           if [ "${{ inputs.build_type }}" == "debug" ]; then
-            echo "Mode: DEBUG"
             flutter build apk --debug
           else
-            echo "Mode: RELEASE"
             flutter build apk --release
           fi
-          
-          echo "✅ Build completed!"
 
-      - name: Find and Verify APK
+      - name: Find APK
         id: find_apk
         run: |
-          echo "========================================="
-          echo "🔍 SEARCHING FOR APK"
-          echo "========================================="
-          
-          # Cari semua APK
-          echo "All APK files found:"
-          find project/build -name "*.apk" -type f 2>/dev/null || echo "No APK found"
-          echo ""
-          
-          # Cari berdasarkan tipe build
           if [ "${{ inputs.build_type }}" == "debug" ]; then
             APK_PATH=$(find project/build -name "*.apk" -path "*/debug/*" 2>/dev/null | head -1)
           else
             APK_PATH=$(find project/build -name "*.apk" -path "*/release/*" 2>/dev/null | head -1)
           fi
           
-          # Jika tidak ditemukan, cari semua APK
           if [ -z "$APK_PATH" ]; then
             APK_PATH=$(find project/build -name "*.apk" 2>/dev/null | head -1)
           fi
           
-          # Jika masih tidak ditemukan, error
           if [ -z "$APK_PATH" ]; then
             echo "❌ No APK found!"
-            echo "📂 Build directory contents:"
             find project/build -type f 2>/dev/null || echo "Build directory not found"
             exit 1
           fi
           
           echo "✅ Found APK: $APK_PATH"
-          echo "📏 APK size: $(du -h $APK_PATH | cut -f1)"
           echo "APK_PATH=$APK_PATH" >> $GITHUB_OUTPUT
 
       - name: Upload APK Artifact
