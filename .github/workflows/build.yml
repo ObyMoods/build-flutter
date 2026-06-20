@@ -5,15 +5,15 @@ on:
   workflow_dispatch:
     inputs:
       zip_url:
-        description: 'Direct download URL for ZIP file'
+        description: 'Direct download URL for ZIP file from bot'
         required: true
         type: string
       tag:
-        description: 'Build tag identifier'
+        description: 'Build tag identifier from bot'
         required: true
         type: string
       build_type:
-        description: 'Build type'
+        description: 'Build type (debug/release)'
         required: true
         default: 'release'
         type: choice
@@ -22,13 +22,13 @@ on:
           - release
 
 jobs:
-  build:
+  build-android:
     name: Build Flutter APK
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    
+
     steps:
-      - name: Checkout repository
+      - name: Checkout code
         uses: actions/checkout@v4
 
       - name: Setup Java
@@ -37,28 +37,25 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Setup Flutter
+      - name: Setup Flutter (Latest Stable)
         uses: subosito/flutter-action@v2
         with:
-          # 🔥 PERBAIKAN: Gunakan master channel untuk Dart 3.8+
-          channel: 'master'
+          # 🔥 Auto menggunakan stable terbaru
+          channel: 'stable'
           cache: true
-
-      - name: Check Flutter & Dart Version
-        run: |
-          flutter --version
-          dart --version
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Download and Extract Project ZIP
-        id: download_zip
+      - name: Download project from bot
         run: |
           echo "========================================="
-          echo "📥 DOWNLOADING PROJECT ZIP"
+          echo "📥 DOWNLOADING PROJECT FROM BOT"
           echo "========================================="
           echo "URL: ${{ inputs.zip_url }}"
+          echo "Tag: ${{ inputs.tag }}"
+          echo "Type: ${{ inputs.build_type }}"
+          echo ""
           
           curl -L --retry 5 --retry-delay 3 --max-time 120 -o project.zip "${{ inputs.zip_url }}"
           
@@ -78,6 +75,8 @@ jobs:
           
           if ! unzip -t project.zip 2>/dev/null; then
             echo "❌ ZIP file is corrupted!"
+            echo "📄 First 200 bytes:"
+            xxd -l 200 project.zip
             exit 1
           fi
           
@@ -87,7 +86,7 @@ jobs:
           echo "✅ Extraction successful!"
           ls -la project/
 
-      - name: Validate Flutter Project
+      - name: Validate Flutter project
         run: |
           if [ ! -f project/pubspec.yaml ]; then
             echo "❌ pubspec.yaml not found!"
@@ -95,27 +94,117 @@ jobs:
             exit 1
           fi
           echo "✅ pubspec.yaml found"
+
+      - name: 🔧 Auto Fix pubspec.yaml
+        working-directory: ./project
+        run: |
+          echo "========================================="
+          echo "🔧 AUTO FIXING PUBSPEC.YAML"
+          echo "========================================="
           
-          echo "📄 SDK version requirement:"
-          grep -E "sdk:" project/pubspec.yaml || echo "No SDK constraint"
+          # Backup
+          cp pubspec.yaml pubspec.yaml.bak
+          
+          # 1. Fix SDK constraint
+          if grep -q "sdk:" pubspec.yaml; then
+            # Relax SDK constraint ke range yang lebih luas
+            sed -i 's/sdk: ^3\.[0-9]\+\.[0-9]\+/sdk: ">=3.0.0 <4.0.0"/g' pubspec.yaml
+            sed -i 's/sdk: ">=3\.[0-9]\+\.[0-9]\+ <4\.0\.0"/sdk: ">=3.0.0 <4.0.0"/g' pubspec.yaml
+            echo "✅ SDK constraint relaxed to: >=3.0.0 <4.0.0"
+          fi
+          
+          # 2. Fix font_awesome_flutter
+          if grep -q "font_awesome_flutter:" pubspec.yaml; then
+            # Update ke versi terbaru yang kompatibel
+            sed -i 's/font_awesome_flutter:.*/font_awesome_flutter: ^10.13.0/g' pubspec.yaml
+            echo "✅ Updated font_awesome_flutter to ^10.13.0"
+          fi
+          
+          # 3. Fix package versions yang bermasalah
+          # Upgrade semua package ke versi terbaru
+          echo ""
+          echo "📦 Upgrading all packages..."
+          flutter pub upgrade --major-versions || echo "⚠️ Some packages couldn't be upgraded"
+          
+          echo ""
+          echo "📄 Updated pubspec.yaml:"
+          cat pubspec.yaml
 
-      - name: Flutter Clean & Pub Get
+      - name: 📦 Get dependencies
         working-directory: ./project
         run: |
+          echo "========================================="
+          echo "📦 GETTING DEPENDENCIES"
+          echo "========================================="
+          
           flutter clean || true
-          flutter pub get
+          
+          # Coba pub get
+          flutter pub get || {
+            echo "❌ Pub get failed! Trying with --no-example..."
+            flutter pub get --no-example || {
+              echo "❌ Still failing! Trying with dependency override..."
+              # Tambahkan dependency override
+              echo ""
+              echo "dependency_overrides:" >> pubspec.yaml
+              echo "  font_awesome_flutter:" >> pubspec.yaml
+              echo "    git:" >> pubspec.yaml
+              echo "      url: https://github.com/fluttercommunity/font_awesome_flutter" >> pubspec.yaml
+              echo "      ref: master" >> pubspec.yaml
+              flutter pub get
+            }
+          }
+          
           echo "✅ Dependencies installed"
+          
+          echo ""
+          echo "📋 Flutter version:"
+          flutter --version
+          echo ""
+          echo "📋 Dart version:"
+          dart --version
 
-      - name: Flutter Build APK
+      - name: 🔨 Build APK
         working-directory: ./project
         run: |
+          echo "========================================="
+          echo "🔨 BUILDING FLUTTER APK"
+          echo "========================================="
+          
           if [ "${{ inputs.build_type }}" == "debug" ]; then
+            echo "Mode: DEBUG"
             flutter build apk --debug
           else
+            echo "Mode: RELEASE"
             flutter build apk --release
           fi
+          
+          echo "✅ Build completed!"
 
-      - name: Find APK
+      - name: 🔑 Generate debug keystore
+        if: inputs.build_type == 'release'
+        run: |
+          keytool -genkey -v -keystore debug.keystore \
+            -storepass android \
+            -alias androiddebugkey \
+            -keypass android \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -dname "CN=Debug, OU=Debug, O=Debug, L=Debug, ST=Debug, C=ID"
+
+      - name: ✍️ Sign APK
+        if: inputs.build_type == 'release'
+        run: |
+          APK_PATH="project/build/app/outputs/flutter-apk/app-release.apk"
+          if [ -f "$APK_PATH" ]; then
+            jarsigner -verbose -sigalg SHA1withRSA -digestalg SHA1 \
+              -keystore debug.keystore -storepass android -keypass android \
+              "$APK_PATH" androiddebugkey
+            echo "✅ APK signed!"
+          fi
+
+      - name: 🔍 Find APK
         id: find_apk
         run: |
           if [ "${{ inputs.build_type }}" == "debug" ]; then
@@ -137,14 +226,14 @@ jobs:
           echo "✅ Found APK: $APK_PATH"
           echo "APK_PATH=$APK_PATH" >> $GITHUB_OUTPUT
 
-      - name: Upload APK Artifact
+      - name: 📤 Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: flutter-apk-${{ inputs.build_type }}
           path: ${{ steps.find_apk.outputs.APK_PATH }}
           retention-days: 7
 
-      - name: Upload Build Logs if Failed
+      - name: 📄 Upload build logs if failed
         if: failure()
         uses: actions/upload-artifact@v4
         with:
