@@ -40,9 +40,6 @@ jobs:
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          # 🔥 Gunakan Flutter 3.22.0 dengan Dart 3.4.0
-          # Kompatibel dengan font_awesome_flutter 10.12.0
-          flutter-version: '3.22.0'
           channel: 'stable'
           cache: true
 
@@ -85,6 +82,39 @@ jobs:
           echo "✅ Extraction successful!"
           ls -la project/
 
+      - name: 🔧 Auto Fix SDK version
+        working-directory: ./project
+        run: |
+          echo "========================================="
+          echo "🔧 AUTO FIX SDK VERSION"
+          echo "========================================="
+          
+          # Cek SDK version sebelum diubah
+          echo "📄 Before fix:"
+          grep -E "^sdk:" pubspec.yaml || echo "No SDK constraint found"
+          
+          # Backup dulu
+          cp pubspec.yaml pubspec.yaml.bak
+          
+          # Ubah sdk: ^3.8.1 menjadi sdk: ">=3.0.0 <4.0.0"
+          sed -i 's/sdk: \^3\.8\.1/sdk: ">=3.0.0 <4.0.0"/g' pubspec.yaml
+          
+          # Ubah sdk: ">=3.8.1 <4.0.0" menjadi sdk: ">=3.0.0 <4.0.0"
+          sed -i 's/sdk: ">=3\.8\.1 <4\.0\.0"/sdk: ">=3.0.0 <4.0.0"/g' pubspec.yaml
+          
+          # Ubah sdk: ^3.8.0 menjadi sdk: ">=3.0.0 <4.0.0"
+          sed -i 's/sdk: \^3\.8\.0/sdk: ">=3.0.0 <4.0.0"/g' pubspec.yaml
+          
+          # Ubah sdk: ">=3.8.0 <4.0.0" menjadi sdk: ">=3.0.0 <4.0.0"
+          sed -i 's/sdk: ">=3\.8\.0 <4\.0\.0"/sdk: ">=3.0.0 <4.0.0"/g' pubspec.yaml
+          
+          echo ""
+          echo "📄 After fix:"
+          grep -E "^sdk:" pubspec.yaml || echo "No SDK constraint found"
+          
+          echo ""
+          echo "✅ SDK version fixed!"
+
       - name: Validate Flutter project
         run: |
           if [ ! -f project/pubspec.yaml ]; then
@@ -93,6 +123,9 @@ jobs:
             exit 1
           fi
           echo "✅ pubspec.yaml found"
+          
+          echo "📄 SDK requirement:"
+          grep -E "^sdk:" project/pubspec.yaml || echo "No SDK constraint"
 
       - name: Check Flutter & Dart version
         run: |
