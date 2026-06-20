@@ -1,0 +1,93 @@
+name: Flutter Build APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_url:
+        description: 'URL Release dengan ZIP file'
+        required: true
+        type: string
+      tag:
+        description: 'Tag build'
+        required: true
+        type: string
+      build_type:
+        description: 'Jenis build (debug/release)'
+        required: true
+        default: 'release'
+        type: choice
+        options:
+          - debug
+          - release
+
+jobs:
+  build:
+    nama : Build Flutter APK
+    berjalan di : ubuntu-latest
+    waktu tunggu-menit : 30
+    
+    langkah-langkah :
+      # 1. Pengaturan lingkungan
+      - nama : Repositori checkout
+        penggunaan : actions/checkout@v4
+      
+      - nama : Pengaturan Java
+        penggunaan : actions/setup-java@v4
+        dengan :
+          distribusi : 'zulu'
+          versi java : '17'
+      
+      - nama : Pengaturan Android SDK
+        menggunakan : android-actions/setup-android@v3
+      
+      - nama : Pengaturan Flutter
+        menggunakan : subosito/flutter-action@v2
+        dengan :
+          versi flutter : '3.22.0'
+          saluran : 'stabil'
+          cache : benar
+      
+      # 2. Unduh ZIP dari Rilis
+      - nama : Unduh kode sumber ZIP
+        jalankan : |
+          echo "📥 Mengunduh ZIP dari: ${{ github.event.inputs.release_url }}"
+          curl -L -o project.zip "${{ github.event.inputs.release_url }}"
+          echo "✅ ZIP berhasil diunduh"
+      
+      - nama : Ekstrak ZIP
+        jalankan : |
+          unzip -q project.zip -d project
+          echo "✅ ZIP berhasil diekstrak"
+          proyek ls -la/
+      
+      # 3. Buat APK
+      - nama : Dapatkan dependensi Flutter
+        jalankan : |
+          proyek CD
+          flutter pub get
+          echo "✅ Dependensi terpasang"
+      
+      - nama : Build APK
+        jalankan : |
+          proyek CD
+          jika [ "${{ github.event.inputs.build_type }}" == "debug" ]; maka
+            flutter build apk --debug
+            echo "✅ APK debug berhasil dibuat"
+          kalau tidak
+            flutter build apk --release
+            echo "✅ Rilis APK berhasil dibuat"
+          fi
+      
+      # 4. Unggah artefak
+      - nama : Unggah artefak APK
+        penggunaan : actions/upload-artifact@v4
+        dengan :
+          nama : flutter-apk
+          jalur : project/build/app/outputs/flutter-apk/*.apk
+          hari retensi : 7
+      
+      # 5. Pembersihan
+      - nama : Pembersihan
+        jalankan : |
+          rm -rf project project.zip
+          echo "🧹 Pembersihan selesai"
