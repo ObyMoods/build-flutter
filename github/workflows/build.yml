@@ -1,93 +1,104 @@
-name: Flutter Build APK
+# .github/workflows/build.yml
+name: Flutter Build
 
 on:
   workflow_dispatch:
     inputs:
-      release_url:
-        description: 'URL Release dengan ZIP file'
+      zip_url:
+        description: 'URL ZIP file to build'
         required: true
         type: string
       tag:
-        description: 'Tag build'
+        description: 'Build tag'
         required: true
         type: string
       build_type:
-        description: 'Jenis build (debug/release)'
+        description: 'Build type (debug/release)'
         required: true
         default: 'release'
-        type: choice
-        options:
-          - debug
-          - release
+        type: string
 
 jobs:
   build:
-    nama : Build Flutter APK
-    berjalan di : ubuntu-latest
-    waktu tunggu-menit : 30
-    
-    langkah-langkah :
-      # 1. Pengaturan lingkungan
-      - nama : Repositori checkout
-        penggunaan : actions/checkout@v4
-      
-      - nama : Pengaturan Java
-        penggunaan : actions/setup-java@v4
-        dengan :
-          distribusi : 'zulu'
-          versi java : '17'
-      
-      - nama : Pengaturan Android SDK
-        menggunakan : android-actions/setup-android@v3
-      
-      - nama : Pengaturan Flutter
-        menggunakan : subosito/flutter-action@v2
-        dengan :
-          versi flutter : '3.22.0'
-          saluran : 'stabil'
-          cache : benar
-      
-      # 2. Unduh ZIP dari Rilis
-      - nama : Unduh kode sumber ZIP
-        jalankan : |
-          echo "📥 Mengunduh ZIP dari: ${{ github.event.inputs.release_url }}"
-          curl -L -o project.zip "${{ github.event.inputs.release_url }}"
-          echo "✅ ZIP berhasil diunduh"
-      
-      - nama : Ekstrak ZIP
-        jalankan : |
+    name: Build Flutter APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.22.0'
+          channel: 'stable'
+          cache: true
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Download project ZIP
+        run: |
+          echo "📥 Downloading project from: ${{ inputs.zip_url }}"
+          curl -L -o project.zip "${{ inputs.zip_url }}"
+          ls -la project.zip
           unzip -q project.zip -d project
-          echo "✅ ZIP berhasil diekstrak"
-          proyek ls -la/
-      
-      # 3. Buat APK
-      - nama : Dapatkan dependensi Flutter
-        jalankan : |
-          proyek CD
-          flutter pub get
-          echo "✅ Dependensi terpasang"
-      
-      - nama : Build APK
-        jalankan : |
-          proyek CD
-          jika [ "${{ github.event.inputs.build_type }}" == "debug" ]; maka
-            flutter build apk --debug
-            echo "✅ APK debug berhasil dibuat"
-          kalau tidak
-            flutter build apk --release
-            echo "✅ Rilis APK berhasil dibuat"
+          ls -la project/
+
+      - name: Check pubspec.yaml
+        run: |
+          if [ ! -f project/pubspec.yaml ]; then
+            echo "❌ pubspec.yaml not found!"
+            exit 1
           fi
-      
-      # 4. Unggah artefak
-      - nama : Unggah artefak APK
-        penggunaan : actions/upload-artifact@v4
-        dengan :
-          nama : flutter-apk
-          jalur : project/build/app/outputs/flutter-apk/*.apk
-          hari retensi : 7
-      
-      # 5. Pembersihan
-      - nama : Pembersihan
-        jalankan : |
-          rm -rf project project.zip
-          echo "🧹 Pembersihan selesai"
+          echo "✅ pubspec.yaml found"
+
+      - name: Flutter clean & pub get
+        working-directory: ./project
+        run: |
+          flutter clean
+          flutter pub get
+
+      - name: Flutter build APK
+        working-directory: ./project
+        run: |
+          if [ "${{ inputs.build_type }}" == "debug" ]; then
+            flutter build apk --debug
+          else
+            flutter build apk --release
+          fi
+
+      - name: Find APK
+        id: find_apk
+        run: |
+          if [ "${{ inputs.build_type }}" == "debug" ]; then
+            APK_PATH=$(find project/build -name "*.apk" -path "*/debug/*" | head -1)
+          else
+            APK_PATH=$(find project/build -name "*.apk" -path "*/release/*" | head -1)
+          fi
+          
+          if [ -z "$APK_PATH" ]; then
+            APK_PATH=$(find project/build -name "*.apk" | head -1)
+          fi
+          
+          echo "APK_PATH=$APK_PATH" >> $GITHUB_OUTPUT
+          echo "✅ Found APK: $APK_PATH"
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: flutter-apk
+          path: ${{ steps.find_apk.outputs.APK_PATH }}
+          retention-days: 7
+
+      - name: Upload build logs if failed
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs
+          path: project/build/
+          retention-days: 3
